@@ -21,7 +21,7 @@ async function syncToCloud(key: string, data: any) {
         data_json: data, 
         updated_at: new Date() 
       }, { onConflict: 'key_name' });
-    if (error) console.error('Supabase sync error:', error);
+    if (error) console.warn('Supabase sync warning:', error.message);
   } catch (e) {
     console.error('Cloud sync failed', e);
   }
@@ -34,7 +34,12 @@ async function pullAllFromCloud() {
       .from('crm_sync')
       .select('key_name, data_json');
     
-    if (!error && data) {
+    if (error) {
+      console.warn('Supabase pull warning:', error.message);
+      return false;
+    }
+
+    if (data && data.length > 0) {
       data.forEach(item => {
         localStorage.setItem(item.key_name, JSON.stringify(item.data_json));
       });
@@ -59,7 +64,11 @@ export const db = {
 
   get<T>(key: string, defaultValue: T): T {
     const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : defaultValue;
+    try {
+      return data ? JSON.parse(data) : defaultValue;
+    } catch (e) {
+      return defaultValue;
+    }
   },
   
   set(key: string, value: any) {
@@ -77,28 +86,37 @@ export const db = {
   },
 
   async init() {
-    await pullAllFromCloud();
-
+    // 1. Birinchi LocalStorage bilan ishni boshlaymiz (Instant start)
     if (!localStorage.getItem(STORAGE_KEYS.USERS)) {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
-      await syncToCloud(STORAGE_KEYS.USERS, SEED_USERS);
     }
 
-    supabase
-      .channel('crm_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'crm_sync' }, (payload) => {
-        const { key_name, data_json } = payload.new as any;
-        if (key_name) {
-          const currentLocal = localStorage.getItem(key_name);
-          const newDataStr = JSON.stringify(data_json);
-          
-          if (currentLocal !== newDataStr) {
-            localStorage.setItem(key_name, newDataStr);
-            listeners.forEach(cb => cb(key_name, data_json));
+    // 2. Cloud ma'lumotlarini orqa fonda (background) yuklaymiz
+    // Bu white-screen (hang) bo'lib qolishini oldini oladi
+    pullAllFromCloud().then(success => {
+      if (success) {
+        // Ma'lumotlar kelganini barcha komponentlarga bildirish
+        listeners.forEach(cb => cb('INIT_CLOUD_SYNC', true));
+      }
+    });
+
+    // 3. Realtime ulanish
+    try {
+      supabase
+        .channel('crm_realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'crm_sync' }, (payload) => {
+          if (payload.new) {
+            const { key_name, data_json } = payload.new as any;
+            if (key_name) {
+              localStorage.setItem(key_name, JSON.stringify(data_json));
+              listeners.forEach(cb => cb(key_name, data_json));
+            }
           }
-        }
-      })
-      .subscribe();
+        })
+        .subscribe();
+    } catch (e) {
+      console.error('Supabase subscription failed');
+    }
   },
 
   getStudents: () => db.get<Student[]>(STORAGE_KEYS.STUDENTS, []),
