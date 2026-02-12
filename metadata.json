@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Shaxmat Klubi CRM",
+  "description": "Shaxmat klubi uchun o'quvchilar, davomat, FaceID va balansni boshqarish tizimi",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
