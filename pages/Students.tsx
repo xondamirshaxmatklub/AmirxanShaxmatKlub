@@ -28,7 +28,6 @@ const Students: React.FC = () => {
   const [formData, setFormData] = useState<Partial<Student>>(initialForm);
 
   useEffect(() => { 
-    // Faqat isActive: true bo'lganlarni ko'rsatamiz
     setStudents(db.getStudents().filter(s => s.isActive !== false)); 
     setGroups(db.getGroups());
     setMemberships(db.getGroupMembers());
@@ -53,13 +52,15 @@ const Students: React.FC = () => {
     const studentData: Student = {
       ...(editingStudent || initialForm),
       ...formData,
-      id: editingStudent ? editingStudent.id : (crypto.randomUUID ? crypto.randomUUID() : 'st-' + Date.now()),
+      id: editingStudent ? editingStudent.id : db.generateId(),
       ism,
       familiya,
       studentCode: code,
       monthlyFee: Number(formData.monthlyFee) || 0,
       isActive: true,
-      lastChargeDate: editingStudent?.lastChargeDate || new Date().toISOString()
+      // MUHIM: Yangi o'quvchi uchun lastChargeDate ni bo'sh qoldiramiz, 
+      // shunda Finance sahifasida birinchi oylik yig'im startDate'dan boshlab hisoblanadi.
+      lastChargeDate: editingStudent ? editingStudent.lastChargeDate : undefined
     } as Student;
 
     let updated = editingStudent 
@@ -173,7 +174,7 @@ const Students: React.FC = () => {
                  const reqs = db.getDeleteRequests();
                  const user = JSON.parse(localStorage.getItem(STORAGE_KEYS.AUTH) || '{}');
                  db.set(STORAGE_KEYS.DELETE_REQUESTS, [...reqs, {
-                    id: crypto.randomUUID(), entityType: 'student', entityId: deleteTarget!.id,
+                    id: db.generateId(), entityType: 'student', entityId: deleteTarget!.id,
                     requestedBy: user.username, reason: deleteReason, status: 'PENDING', createdAt: new Date().toISOString()
                  }]);
                  showToast('So\'rov yuborildi', 'info');

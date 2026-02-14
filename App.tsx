@@ -13,7 +13,6 @@ import { processBotUpdates } from './services/telegram';
 
 // Import page components
 import LoginPage from './pages/Login';
-import Dashboard from './pages/Dashboard';
 import Students from './pages/Students';
 import StudentProfile from './pages/StudentProfile';
 import Groups from './pages/Groups';
@@ -50,7 +49,6 @@ const AppLayout: React.FC<{ user: AuthUser, onLogout: () => void, children: Reac
   const location = useLocation();
 
   const links = [
-    { to: '/', icon: <TrendingUp size={20}/>, label: 'Bosh sahifa' },
     { to: '/students', icon: <Users size={20}/>, label: 'O\'quvchilar' },
     { to: '/groups', icon: <Users2 size={20}/>, label: 'Guruhlar' },
     { to: '/attendance', icon: <Calendar size={20}/>, label: 'Davomat' },
@@ -130,10 +128,11 @@ export default function App() {
     let active = true;
     const poll = async () => {
       if (!active) return;
-      await processBotUpdates();
-      // Long Polling ishlatilgani uchun, keyingi so'rovni darhol (100ms dan keyin) yuboramiz.
-      // Chunki processBotUpdates o'zi Telegram xabar kelishini 30 soniya kutib turadi.
-      if (active) setTimeout(poll, 100);
+      const success = await processBotUpdates();
+      if (active) {
+          // Muvaffaqiyatli bo'lsa darhol keyingisiga, aks holda 5 soniya kutamiz (Backoff)
+          setTimeout(poll, success ? 100 : 5000);
+      }
     };
     poll();
     return () => { active = false; };
@@ -156,7 +155,7 @@ export default function App() {
         <HashRouter>
           <AppLayout user={currentUser} onLogout={() => { db.set(STORAGE_KEYS.AUTH, null); setCurrentUser(null); }}>
             <Routes>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Navigate to="/students" replace />} />
               <Route path="/students" element={<Students />} />
               <Route path="/students/:id" element={<StudentProfile />} />
               <Route path="/groups" element={<Groups />} />
@@ -172,7 +171,6 @@ export default function App() {
           </AppLayout>
         </HashRouter>
 
-        {/* Toast Notification Overlay */}
         {toast && (
           <div className="fixed top-6 right-6 z-[9999] animate-in slide-in-from-right-8 fade-in duration-300">
             <div className={`flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border ${

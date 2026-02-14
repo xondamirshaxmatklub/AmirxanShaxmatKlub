@@ -36,8 +36,7 @@ export async function checkBotStatus() {
       return { status: 'ERROR', error: `${data.error_code}: ${data.description}` };
     }
   } catch (error) {
-    console.error('Bot status check error:', error);
-    return { status: 'ERROR', error: 'Connection failed' };
+    return { status: 'ERROR', error: 'Tarmoqqa ulanishda xatolik (Internetni tekshiring)' };
   }
 }
 
@@ -69,25 +68,34 @@ export async function sendTelegramMessage(chatId: string, message: string, type:
 
     return result.ok;
   } catch (error) {
-    console.error('Telegram send error:', error);
+    console.error('Telegram xabar yuborishda xatolik:', error);
     return false;
   }
 }
 
-export async function processBotUpdates() {
+export async function processBotUpdates(): Promise<boolean> {
   const token = getToken();
   const offset = Number(localStorage.getItem(STORAGE_KEYS.TELEGRAM_OFFSET) || '0');
   
   try {
-    // timeout=30 - Long Polling. Telegram xabar kelishini 30 soniya kutadi.
-    const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset + 1}&timeout=30`);
+    // timeout=20 - Long Polling. Telegram xabar kelishini 20 soniya kutadi.
+    const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset + 1}&timeout=20`);
+    
+    if (!res.ok) {
+        if (res.status === 409) {
+            // 409 Conflict: Boshqa sessiya getUpdates chaqirmoqda. Offsetni yangilashga harakat qilamiz.
+            console.warn('Telegram Polling Conflict (409). Polling biroz to\'xtatildi.');
+            return false;
+        }
+        return false;
+    }
+
     const data = await res.json();
     
     if (data.ok && data.result.length > 0) {
       for (const update of data.result) {
         localStorage.setItem(STORAGE_KEYS.TELEGRAM_OFFSET, update.update_id.toString());
         
-        // Callback query (Tugmalar bosilganda)
         if (update.callback_query) {
             const chatId = update.callback_query.message.chat.id.toString();
             const callbackData = update.callback_query.data;
@@ -108,11 +116,7 @@ export async function processBotUpdates() {
                             createdAt: new Date().toISOString()
                         };
                         db.set(STORAGE_KEYS.TELEGRAM_PARENTS, [...parents, newParent]);
-                        
-                        // Answer callback to remove loading state in Telegram
                         fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery?callback_query_id=${update.callback_query.id}`);
-                        
-                        // Send success message immediately
                         await sendTelegramMessage(chatId, `✅ <b>Muvaffaqiyatli ulandi!</b>\n\nFarzandingiz: <b>${student.ism} ${student.familiya}</b>\n\nEndi davomat va ballar haqida xabarlar shu yerga keladi.`, 'SYSTEM', sId);
                     } else {
                         await sendTelegramMessage(chatId, `⚠️ Bu o'quvchi allaqachon ulangan.`, 'SYSTEM');
@@ -125,7 +129,6 @@ export async function processBotUpdates() {
             continue;
         }
 
-        // Oddiy xabarlar
         if (update.message) {
           const chatId = update.message.chat.id.toString();
           const text = update.message.text?.trim();
@@ -135,7 +138,6 @@ export async function processBotUpdates() {
           if (text === '/start') {
             await sendTelegramMessage(chatId, "👋 <b>Xush kelibsiz!</b>\n\nShaxmat maktabi botiga xush kelibsiz. Farzandingizni tizimga ulash uchun uning <b>ID kodini</b> kiriting (Masalan: 1001):", 'SYSTEM');
           } else {
-            // ID kod bo'yicha qidirish
             const student = db.getStudents().find(s => s.studentCode.toLowerCase() === text.toLowerCase());
             if (student) {
               await sendTelegramMessage(chatId, `👤 <b>O'quvchi topildi:</b>\n\nIsmi: ${student.ism} ${student.familiya}\nID: ${student.studentCode}\n\nBu sizning farzandingizmi?`, 'SYSTEM', student.id, {
@@ -155,8 +157,11 @@ export async function processBotUpdates() {
         }
       }
     }
+    return true;
   } catch (e) {
-    console.error('Bot polling error:', e);
+    // Tarmoq xatoliklari (Failed to fetch) bu yerga tushadi. 
+    // Console'ni flood qilmaslik uchun error logini o'chirib qo'yamiz yoki yumshatamiz.
+    return false;
   }
 }
 

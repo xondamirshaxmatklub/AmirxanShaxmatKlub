@@ -7,8 +7,8 @@ import {
   AttendanceRecord, AttendanceStatus, 
   AuthUser, LedgerType, CoinLedger
 } from '../types';
-import { Camera, Check, RefreshCw, Loader2, CheckCircle2, Clock, XCircle, AlertCircle } from 'lucide-react';
-import { verifyFace } from '../services/gemini';
+import { Camera, Check, RefreshCw, Loader2, CheckCircle2, Clock, XCircle, AlertCircle, UserSearch } from 'lucide-react';
+import { identifyStudent } from '../services/gemini';
 import { notifyAttendance } from '../services/telegram';
 import { SyncContext, ToastContext } from '../App';
 
@@ -85,7 +85,6 @@ const Attendance: React.FC<Props> = ({ user }) => {
   const handleFinish = async () => {
     if (!session || !confirm('Darsni yakunlaysizmi? Ballar arxivga (tarixga) yoziladi.')) return;
     
-    // Ma'lumotlarni to'g'ridan-to'g'ri LocalStorage'dan eng oxirgi holatda olamiz
     const latestAllRecords = db.getRecords() || [];
     const currentLedger = db.getLedger() || [];
     const updatedRecords = [...latestAllRecords];
@@ -96,7 +95,6 @@ const Attendance: React.FC<Props> = ({ user }) => {
       let record = recordIdx > -1 ? updatedRecords[recordIdx] : null;
 
       if (!record) {
-        // Agar belgilanmagan bo'sa - KELMADI
         const newRecord: AttendanceRecord = {
           id: db.generateId(),
           sessionId: session.id,
@@ -136,7 +134,7 @@ const Attendance: React.FC<Props> = ({ user }) => {
         db.set(STORAGE_KEYS.ATTENDANCE_SESSIONS, allSessions);
       }
 
-      showToast(`Muvaffaqiyatli! ${newLedgerEntries.length} kishi uchun ballar tasdiqlandi.`, 'success');
+      showToast(`Muvaffaqiyatli yakunlandi!`, 'success');
       loadSession();
     } catch (e) {
       showToast('Xatolik yuz berdi.', 'error');
@@ -146,26 +144,45 @@ const Attendance: React.FC<Props> = ({ user }) => {
   const captureFace = async () => {
     if (!videoRef.current || isLoading) return;
     setIsLoading(true);
-    setFaceMsg('Skanerlanmoqda...');
+    setFaceMsg('Qidirilmoqda...');
+    
     const c = document.createElement('canvas');
     c.width = videoRef.current.videoWidth;
     c.height = videoRef.current.videoHeight;
-    c.getContext('2d')?.drawImage(videoRef.current, 0, 0);
-    const img = c.toDataURL('image/jpeg');
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(videoRef.current, 0, 0);
+    const img = c.toDataURL('image/jpeg', 0.8);
     
-    for (const s of members) {
-      if (s.facePhoto && !s.isFrozen) {
-        const res = await verifyFace(s.facePhoto, img);
-        if (res.match && res.confidence > 0.6) {
-           await setStatus(s.id, AttendanceStatus.KELDI);
-           setFaceMsg(`${s.ism} topildi!`);
-           setIsLoading(false);
-           return;
-        }
-      }
+    // O'quvchilarni Gemini uchun tayyorlaymiz
+    const candidates = members
+      .filter(s => s.facePhoto && !s.isFrozen)
+      .map(s => ({ id: s.id, photo: s.facePhoto!, name: `${s.ism} ${s.familiya}` }));
+    
+    if (candidates.length === 0) {
+      setFaceMsg('Rasmlar yo\'q');
+      setIsLoading(false);
+      return;
     }
-    setFaceMsg('Topilmadi');
-    setIsLoading(false);
+
+    try {
+      const res = await identifyStudent(img, candidates);
+      if (res.match && res.studentId) {
+        const student = members.find(m => m.id === res.studentId);
+        if (student) {
+          await setStatus(student.id, AttendanceStatus.KELDI);
+          setFaceMsg(`${student.ism} topildi!`);
+        } else {
+          setFaceMsg('Noma\'lum o\'quvchi');
+        }
+      } else {
+        setFaceMsg('Topilmadi');
+      }
+    } catch (err) {
+      setFaceMsg('Xatolik yuz berdi');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -184,9 +201,15 @@ const Attendance: React.FC<Props> = ({ user }) => {
           <button 
             onClick={() => { 
               setIsFaceMode(true); 
+              setFaceMsg('Kamera tayyorlanmoqda...');
               setTimeout(() => {
                 navigator.mediaDevices.getUserMedia({ video: { facingMode } })
-                  .then(s => videoRef.current && (videoRef.current.srcObject = s))
+                  .then(s => {
+                    if (videoRef.current) {
+                      videoRef.current.srcObject = s;
+                      setFaceMsg('Rasmga tushing');
+                    }
+                  })
                   .catch(() => { showToast('Kameraga ulanishda xatolik', 'error'); setIsFaceMode(false); });
               }, 100); 
             }} 
@@ -202,7 +225,7 @@ const Attendance: React.FC<Props> = ({ user }) => {
         <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl flex items-start gap-3">
           <AlertCircle className="text-amber-600 shrink-0" size={20}/>
           <p className="text-xs text-amber-800 font-medium">
-            <b>Diqqat:</b> Ballar profilga darhol qo'shiladi. <b>"Darsni yakunlash"</b> esa faqat ballarni arxivga o'tkazish uchun kerak.
+            <b>Maslahat:</b> FaceID yaxshi ishlashi uchun yuzni kamera markazida va yaxshi yorug'likda tuting.
           </p>
         </div>
       )}
@@ -255,17 +278,44 @@ const Attendance: React.FC<Props> = ({ user }) => {
 
       {isFaceMode && (
         <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center p-4">
-          <div className="relative w-full max-w-lg aspect-square bg-gray-900 rounded-3xl overflow-hidden shadow-2xl">
+          <div className="relative w-full max-w-lg aspect-square bg-gray-900 rounded-3xl overflow-hidden shadow-2xl border-2 border-indigo-500/30">
             <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+            
+            {/* Skanerlash animatsiyasi */}
+            {isLoading && (
+              <div className="absolute inset-x-0 top-0 h-1 bg-indigo-500/80 shadow-[0_0_15px_rgba(79,70,229,0.8)] animate-[scan_2s_ease-in-out_infinite] z-10" />
+            )}
+
             <div className="absolute bottom-6 inset-x-0 flex flex-col items-center gap-4">
-               <div className="bg-indigo-600 px-4 py-2 rounded-full text-white text-xs font-bold shadow-xl">{faceMsg || 'Tayyormisiz?'}</div>
+               <div className={`px-6 py-2 rounded-full text-white text-xs font-bold shadow-xl transition-all ${isLoading ? 'bg-indigo-600 animate-pulse' : 'bg-gray-800/80 backdrop-blur-md'}`}>
+                 {faceMsg}
+               </div>
                <div className="flex gap-4">
-                  <button onClick={captureFace} className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-lg active:scale-90 border-4 border-gray-200">{isLoading ? <Loader2 size={24} className="animate-spin text-indigo-600"/> : <div className="w-10 h-10 bg-indigo-600 rounded-full shadow-inner"/>}</button>
-                  <button onClick={() => setFacingMode(f => f === 'user' ? 'environment' : 'user')} className="w-16 h-16 bg-gray-800 text-white rounded-full flex items-center justify-center shadow-lg active:rotate-180 transition-transform duration-500"><RefreshCw size={24}/></button>
+                  <button onClick={captureFace} className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-lg active:scale-90 border-4 border-gray-200">
+                    {isLoading ? <Loader2 size={24} className="animate-spin text-indigo-600"/> : <div className="w-10 h-10 bg-indigo-600 rounded-full shadow-inner"/>}
+                  </button>
+                  <button onClick={() => {
+                    const tracks = (videoRef.current?.srcObject as MediaStream)?.getTracks();
+                    tracks?.forEach(t => t.stop());
+                    const newMode = facingMode === 'user' ? 'environment' : 'user';
+                    setFacingMode(newMode);
+                    navigator.mediaDevices.getUserMedia({ video: { facingMode: newMode } })
+                      .then(s => videoRef.current && (videoRef.current.srcObject = s));
+                  }} className="w-16 h-16 bg-gray-800 text-white rounded-full flex items-center justify-center shadow-lg active:rotate-180 transition-transform duration-500">
+                    <RefreshCw size={24}/>
+                  </button>
                </div>
             </div>
           </div>
           <button onClick={() => { (videoRef.current?.srcObject as MediaStream)?.getTracks().forEach(t => t.stop()); setIsFaceMode(false); }} className="mt-8 text-white/50 font-bold hover:text-white transition-colors">Yopish</button>
+          
+          <style>{`
+            @keyframes scan {
+              0% { top: 0%; }
+              50% { top: 100%; }
+              100% { top: 0%; }
+            }
+          `}</style>
         </div>
       )}
     </div>
