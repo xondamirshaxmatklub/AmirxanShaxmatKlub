@@ -7,8 +7,7 @@ import {
   AttendanceRecord, AttendanceStatus, 
   AuthUser, LedgerType, CoinLedger
 } from '../types';
-// Fixed: Added Info to the lucide-react import list
-import { Camera, Check, RefreshCw, Loader2, CheckCircle2, Clock, XCircle, AlertCircle, UserSearch, FlipHorizontal, Info } from 'lucide-react';
+import { Camera, Check, RefreshCw, Loader2, CheckCircle2, Clock, XCircle, AlertCircle, FlipHorizontal, Info } from 'lucide-react';
 import { identifyStudent } from '../services/gemini';
 import { notifyAttendance } from '../services/telegram';
 import { SyncContext, ToastContext } from '../App';
@@ -148,22 +147,31 @@ const Attendance: React.FC<Props> = ({ user }) => {
     setFaceMsg('AI tahlil qilmoqda...');
     
     const c = document.createElement('canvas');
-    // Tasvirni biroz kichraytiramiz, lekin proporsiyani saqlaymiz (AI tahlili uchun 640px yetarli)
-    const scale = Math.min(640 / videoRef.current.videoWidth, 1);
-    c.width = videoRef.current.videoWidth * scale;
-    c.height = videoRef.current.videoHeight * scale;
+    // High-res capture for better recognition on mobile
+    const width = 1280;
+    const height = (videoRef.current.videoHeight / videoRef.current.videoWidth) * width;
+    c.width = width;
+    c.height = height;
     
     const ctx = c.getContext('2d');
     if (!ctx) return;
-    ctx.drawImage(videoRef.current, 0, 0, c.width, c.height);
-    const img = c.toDataURL('image/jpeg', 0.85); // Sifatni biroz baland tutamiz
+    
+    // Draw current frame
+    ctx.drawImage(videoRef.current, 0, 0, width, height);
+    const img = c.toDataURL('image/jpeg', 0.9);
     
     const candidates = members
       .filter(s => s.facePhoto && !s.isFrozen)
       .map(s => ({ id: s.id, photo: s.facePhoto!, name: `${s.ism} ${s.familiya}` }));
     
     if (candidates.length === 0) {
-      setFaceMsg('O\'quvchi rasmlari yuklanmagan');
+      setFaceMsg('Reference rasm mavjud emas');
+      setIsLoading(false);
+      return;
+    }
+
+    if (!process.env.API_KEY) {
+      setFaceMsg('Xato: API_KEY topilmadi');
       setIsLoading(false);
       return;
     }
@@ -174,17 +182,16 @@ const Attendance: React.FC<Props> = ({ user }) => {
         const student = members.find(m => m.id === res.studentId);
         if (student) {
           await setStatus(student.id, AttendanceStatus.KELDI);
-          setFaceMsg(`Muvaffaqiyat: ${student.ism}!`);
-          // 2 soniyadan keyin avtomatik yopish yoki keyingi skanerga tayyorlash
-          setTimeout(() => setFaceMsg('Keyingi o\'quvchi...'), 2000);
+          setFaceMsg(`Muvaffaqiyatli: ${student.ism}!`);
+          setTimeout(() => setFaceMsg('Keyingi o\'quvchi...'), 1500);
         } else {
-          setFaceMsg('Noma\'lum xatolik');
+          setFaceMsg('ID bo\'yicha topilmadi');
         }
       } else {
         setFaceMsg('Tizim tanimadi. Qayta urinib ko\'ring');
       }
     } catch (err) {
-      setFaceMsg('API ulanishda xatolik');
+      setFaceMsg('Xatolik: API ulanishda uzilish');
       console.error(err);
     } finally {
       setIsLoading(false);
@@ -209,11 +216,11 @@ const Attendance: React.FC<Props> = ({ user }) => {
               setIsFaceMode(true); 
               setFaceMsg('Kamera yuklanmoqda...');
               setTimeout(() => {
-                navigator.mediaDevices.getUserMedia({ video: { facingMode } })
+                navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } } })
                   .then(s => {
                     if (videoRef.current) {
                       videoRef.current.srcObject = s;
-                      setFaceMsg('Yuzingizni ko\'rsating');
+                      setFaceMsg('Yuzni kamera markazida tuting');
                     }
                   })
                   .catch(() => { showToast('Kameraga ruxsat berilmadi', 'error'); setIsFaceMode(false); });
@@ -226,15 +233,6 @@ const Attendance: React.FC<Props> = ({ user }) => {
           </button>
         </div>
       </div>
-
-      {!session?.isClosed && selectedGroupId && (
-        <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-2xl flex items-start gap-3">
-          <Info className="text-indigo-600 shrink-0" size={20}/>
-          <p className="text-xs text-indigo-800 font-medium">
-            <b>FaceID haqida:</b> Agar Vercel-da "Topilmadi" chiqsa, Environment Variables-da <b>API_KEY</b> mavjudligini tekshiring.
-          </p>
-        </div>
-      )}
 
       {session && (
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
@@ -293,8 +291,8 @@ const Attendance: React.FC<Props> = ({ user }) => {
               </div>
             )}
 
-            <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none">
-               <div className="w-full h-full border-2 border-dashed border-white/20 rounded-2xl" />
+            <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none flex items-center justify-center">
+               <div className="w-64 h-64 border-2 border-dashed border-white/40 rounded-full" />
             </div>
 
             <div className="absolute bottom-6 inset-x-0 flex flex-col items-center gap-4 px-6">
@@ -310,10 +308,10 @@ const Attendance: React.FC<Props> = ({ user }) => {
                     tracks?.forEach(t => t.stop());
                     const newMode = facingMode === 'user' ? 'environment' : 'user';
                     setFacingMode(newMode);
-                    navigator.mediaDevices.getUserMedia({ video: { facingMode: newMode } })
+                    navigator.mediaDevices.getUserMedia({ video: { facingMode: newMode, width: { ideal: 1280 }, height: { ideal: 720 } } })
                       .then(s => videoRef.current && (videoRef.current.srcObject = s));
                   }} className="w-20 h-20 bg-white/10 text-white rounded-full flex items-center justify-center shadow-lg active:rotate-180 transition-transform duration-500 backdrop-blur-md">
-                    <FlipHorizontal size={32}/>
+                    <RefreshCw size={32}/>
                   </button>
                </div>
             </div>
