@@ -13,22 +13,23 @@ export async function identifyStudent(capturedBase64: string, candidates: Studen
     
     const cleanCap = capturedBase64.replace(/^data:image\/\w+;base64,/, '');
     
-    // Faqat rasmi bor o'quvchilarni saralab olamiz
+    // Only students with reference photos
     const validCandidates = candidates.filter(c => !!c.photo);
     
     if (validCandidates.length === 0) {
       return { match: false, studentId: null, confidence: 0 };
     }
 
-    // Gemini uchun parts tayyorlash
+    // Prepare parts for Gemini
+    // We use English for system-like instructions as Gemini models are more robust with it.
     const imageParts: any[] = [
       { inlineData: { mimeType: 'image/jpeg', data: cleanCap } },
-      { text: "Mana bu 'Target' rasm (birinchi rasm). Quyida esa bir nechta o'quvchilarning 'Reference' rasmlari va ularning ID raqamlari berilgan. Target rasm qaysi o'quvchiga tegishli ekanligini aniqlang. Agar aniq moslik topilmasa, match: false qaytaring. Yorug'lik yoki sifatdagi biroz farqlarga qaramang, yuz tuzilishiga e'tibor bering." }
+      { text: "INSTRUCTION: The first image is the 'Target'. Below are 'Reference' images with their IDs. Compare the Target face with all Reference faces. Focus on bone structure, eye shape, and nose. Ignore lighting, background, or minor facial expression differences. If a strong match is found, return the ID. If not sure, return match: false." }
     ];
 
     validCandidates.forEach(c => {
       const cleanRef = c.photo.replace(/^data:image\/\w+;base64,/, '');
-      imageParts.push({ text: `Student ID: ${c.id}, Name: ${c.name}` });
+      imageParts.push({ text: `Reference ID: ${c.id}` });
       imageParts.push({ inlineData: { mimeType: 'image/jpeg', data: cleanRef } });
     });
 
@@ -42,16 +43,16 @@ export async function identifyStudent(capturedBase64: string, candidates: Studen
           properties: {
             match: {
               type: Type.BOOLEAN,
-              description: "True if target image matches one of the reference images.",
+              description: "True if the person in the target image is clearly one of the reference students.",
             },
             studentId: {
               type: Type.STRING,
-              description: "The ID of the matching student. Return null if no match.",
+              description: "The ID of the matching student from the provided references.",
               nullable: true
             },
             confidence: {
               type: Type.NUMBER,
-              description: "Confidence score from 0 to 1.",
+              description: "Confidence score from 0.0 to 1.0",
             },
           },
           required: ["match", "studentId", "confidence"],
@@ -59,7 +60,14 @@ export async function identifyStudent(capturedBase64: string, candidates: Studen
       }
     });
 
-    const result = JSON.parse(response.text || '{"match": false, "studentId": null, "confidence": 0}');
+    const textResult = response.text || '{"match": false, "studentId": null, "confidence": 0}';
+    const result = JSON.parse(textResult);
+    
+    // Low confidence threshold
+    if (result.confidence < 0.4) {
+        return { match: false, studentId: null, confidence: result.confidence };
+    }
+
     return result;
   } catch (error) {
     console.error("Face identification error:", error);

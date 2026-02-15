@@ -7,7 +7,8 @@ import {
   AttendanceRecord, AttendanceStatus, 
   AuthUser, LedgerType, CoinLedger
 } from '../types';
-import { Camera, Check, RefreshCw, Loader2, CheckCircle2, Clock, XCircle, AlertCircle, UserSearch } from 'lucide-react';
+// Fixed: Added Info to the lucide-react import list
+import { Camera, Check, RefreshCw, Loader2, CheckCircle2, Clock, XCircle, AlertCircle, UserSearch, FlipHorizontal, Info } from 'lucide-react';
 import { identifyStudent } from '../services/gemini';
 import { notifyAttendance } from '../services/telegram';
 import { SyncContext, ToastContext } from '../App';
@@ -144,23 +145,25 @@ const Attendance: React.FC<Props> = ({ user }) => {
   const captureFace = async () => {
     if (!videoRef.current || isLoading) return;
     setIsLoading(true);
-    setFaceMsg('Qidirilmoqda...');
+    setFaceMsg('AI tahlil qilmoqda...');
     
     const c = document.createElement('canvas');
-    c.width = videoRef.current.videoWidth;
-    c.height = videoRef.current.videoHeight;
+    // Tasvirni biroz kichraytiramiz, lekin proporsiyani saqlaymiz (AI tahlili uchun 640px yetarli)
+    const scale = Math.min(640 / videoRef.current.videoWidth, 1);
+    c.width = videoRef.current.videoWidth * scale;
+    c.height = videoRef.current.videoHeight * scale;
+    
     const ctx = c.getContext('2d');
     if (!ctx) return;
-    ctx.drawImage(videoRef.current, 0, 0);
-    const img = c.toDataURL('image/jpeg', 0.8);
+    ctx.drawImage(videoRef.current, 0, 0, c.width, c.height);
+    const img = c.toDataURL('image/jpeg', 0.85); // Sifatni biroz baland tutamiz
     
-    // O'quvchilarni Gemini uchun tayyorlaymiz
     const candidates = members
       .filter(s => s.facePhoto && !s.isFrozen)
       .map(s => ({ id: s.id, photo: s.facePhoto!, name: `${s.ism} ${s.familiya}` }));
     
     if (candidates.length === 0) {
-      setFaceMsg('Rasmlar yo\'q');
+      setFaceMsg('O\'quvchi rasmlari yuklanmagan');
       setIsLoading(false);
       return;
     }
@@ -171,15 +174,18 @@ const Attendance: React.FC<Props> = ({ user }) => {
         const student = members.find(m => m.id === res.studentId);
         if (student) {
           await setStatus(student.id, AttendanceStatus.KELDI);
-          setFaceMsg(`${student.ism} topildi!`);
+          setFaceMsg(`Muvaffaqiyat: ${student.ism}!`);
+          // 2 soniyadan keyin avtomatik yopish yoki keyingi skanerga tayyorlash
+          setTimeout(() => setFaceMsg('Keyingi o\'quvchi...'), 2000);
         } else {
-          setFaceMsg('Noma\'lum o\'quvchi');
+          setFaceMsg('Noma\'lum xatolik');
         }
       } else {
-        setFaceMsg('Topilmadi');
+        setFaceMsg('Tizim tanimadi. Qayta urinib ko\'ring');
       }
     } catch (err) {
-      setFaceMsg('Xatolik yuz berdi');
+      setFaceMsg('API ulanishda xatolik');
+      console.error(err);
     } finally {
       setIsLoading(false);
     }
@@ -201,31 +207,31 @@ const Attendance: React.FC<Props> = ({ user }) => {
           <button 
             onClick={() => { 
               setIsFaceMode(true); 
-              setFaceMsg('Kamera tayyorlanmoqda...');
+              setFaceMsg('Kamera yuklanmoqda...');
               setTimeout(() => {
                 navigator.mediaDevices.getUserMedia({ video: { facingMode } })
                   .then(s => {
                     if (videoRef.current) {
                       videoRef.current.srcObject = s;
-                      setFaceMsg('Rasmga tushing');
+                      setFaceMsg('Yuzingizni ko\'rsating');
                     }
                   })
-                  .catch(() => { showToast('Kameraga ulanishda xatolik', 'error'); setIsFaceMode(false); });
+                  .catch(() => { showToast('Kameraga ruxsat berilmadi', 'error'); setIsFaceMode(false); });
               }, 100); 
             }} 
             className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg disabled:opacity-50" 
             disabled={!selectedGroupId || session?.isClosed}
           >
-            <Camera size={20}/> FaceID
+            <Camera size={20}/> FaceID Skaner
           </button>
         </div>
       </div>
 
       {!session?.isClosed && selectedGroupId && (
-        <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl flex items-start gap-3">
-          <AlertCircle className="text-amber-600 shrink-0" size={20}/>
-          <p className="text-xs text-amber-800 font-medium">
-            <b>Maslahat:</b> FaceID yaxshi ishlashi uchun yuzni kamera markazida va yaxshi yorug'likda tuting.
+        <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-2xl flex items-start gap-3">
+          <Info className="text-indigo-600 shrink-0" size={20}/>
+          <p className="text-xs text-indigo-800 font-medium">
+            <b>FaceID haqida:</b> Agar Vercel-da "Topilmadi" chiqsa, Environment Variables-da <b>API_KEY</b> mavjudligini tekshiring.
           </p>
         </div>
       )}
@@ -233,7 +239,7 @@ const Attendance: React.FC<Props> = ({ user }) => {
       {session && (
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="p-4 bg-indigo-50/30 border-b flex justify-between items-center">
-            <h3 className="font-bold">Dars: {session.isClosed ? 'Yakunlangan' : 'Ochiq'}</h3>
+            <h3 className="font-bold">Guruh: {groups.find(g => g.id === selectedGroupId)?.name}</h3>
             {!session.isClosed && (
               <button onClick={handleFinish} className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg transition-all active:scale-95">
                 <Check size={16}/> Darsni yakunlash
@@ -258,7 +264,7 @@ const Attendance: React.FC<Props> = ({ user }) => {
                     <div className="flex gap-1 overflow-x-auto no-scrollbar">
                       <button onClick={() => setStatus(s.id, AttendanceStatus.KELDI)} className={`px-4 py-2 rounded-xl text-[10px] font-bold border transition-all ${r?.status === AttendanceStatus.KELDI ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' : 'bg-white text-gray-400 border-gray-100'}`}>KELDI</button>
                       <button onClick={() => setStatus(s.id, AttendanceStatus.KECHIKDI)} className={`px-4 py-2 rounded-xl text-[10px] font-bold border transition-all ${r?.status === AttendanceStatus.KECHIKDI ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-white text-gray-400 border-gray-100'}`}>KECHIKDI</button>
-                      <button onClick={() => setStatus(s.id, AttendanceStatus.KELMADI)} className={`px-4 py-2 rounded-xl text-[10px] font-bold border transition-all ${r?.status === AttendanceStatus.KELMADI ? 'bg-red-50 text-white border-red-500 shadow-sm' : 'bg-white text-gray-400 border-gray-100'}`}>KELMADI</button>
+                      <button onClick={() => setStatus(s.id, AttendanceStatus.KELMADI)} className={`px-4 py-2 rounded-xl text-[10px] font-bold border transition-all ${r?.status === AttendanceStatus.KELMADI ? 'bg-red-600 text-white border-red-600 shadow-sm' : 'bg-white text-gray-400 border-gray-100'}`}>KELMADI</button>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
@@ -271,7 +277,6 @@ const Attendance: React.FC<Props> = ({ user }) => {
                 </div>
               );
             })}
-            {members.length === 0 && <div className="p-10 text-center text-gray-400 italic">Guruhda o'quvchilar yo'q</div>}
           </div>
         </div>
       )}
@@ -279,20 +284,26 @@ const Attendance: React.FC<Props> = ({ user }) => {
       {isFaceMode && (
         <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center p-4">
           <div className="relative w-full max-w-lg aspect-square bg-gray-900 rounded-3xl overflow-hidden shadow-2xl border-2 border-indigo-500/30">
-            <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+            <video ref={videoRef} autoPlay playsInline className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
             
-            {/* Skanerlash animatsiyasi */}
+            {/* Scan line overlay */}
             {isLoading && (
-              <div className="absolute inset-x-0 top-0 h-1 bg-indigo-500/80 shadow-[0_0_15px_rgba(79,70,229,0.8)] animate-[scan_2s_ease-in-out_infinite] z-10" />
+              <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                <div className="w-full h-1 bg-indigo-400 shadow-[0_0_20px_rgba(129,140,248,0.8)] animate-[scan_2s_linear_infinite]" />
+              </div>
             )}
 
-            <div className="absolute bottom-6 inset-x-0 flex flex-col items-center gap-4">
-               <div className={`px-6 py-2 rounded-full text-white text-xs font-bold shadow-xl transition-all ${isLoading ? 'bg-indigo-600 animate-pulse' : 'bg-gray-800/80 backdrop-blur-md'}`}>
+            <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none">
+               <div className="w-full h-full border-2 border-dashed border-white/20 rounded-2xl" />
+            </div>
+
+            <div className="absolute bottom-6 inset-x-0 flex flex-col items-center gap-4 px-6">
+               <div className={`px-6 py-3 rounded-2xl text-white text-sm font-bold shadow-xl transition-all text-center w-full max-w-xs ${isLoading ? 'bg-indigo-600 animate-pulse' : 'bg-black/60 backdrop-blur-md border border-white/10'}`}>
                  {faceMsg}
                </div>
                <div className="flex gap-4">
-                  <button onClick={captureFace} className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-lg active:scale-90 border-4 border-gray-200">
-                    {isLoading ? <Loader2 size={24} className="animate-spin text-indigo-600"/> : <div className="w-10 h-10 bg-indigo-600 rounded-full shadow-inner"/>}
+                  <button onClick={captureFace} className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg active:scale-90 border-8 border-gray-200/20">
+                    {isLoading ? <Loader2 size={32} className="animate-spin text-indigo-600"/> : <div className="w-12 h-12 bg-indigo-600 rounded-full shadow-inner"/>}
                   </button>
                   <button onClick={() => {
                     const tracks = (videoRef.current?.srcObject as MediaStream)?.getTracks();
@@ -301,19 +312,18 @@ const Attendance: React.FC<Props> = ({ user }) => {
                     setFacingMode(newMode);
                     navigator.mediaDevices.getUserMedia({ video: { facingMode: newMode } })
                       .then(s => videoRef.current && (videoRef.current.srcObject = s));
-                  }} className="w-16 h-16 bg-gray-800 text-white rounded-full flex items-center justify-center shadow-lg active:rotate-180 transition-transform duration-500">
-                    <RefreshCw size={24}/>
+                  }} className="w-20 h-20 bg-white/10 text-white rounded-full flex items-center justify-center shadow-lg active:rotate-180 transition-transform duration-500 backdrop-blur-md">
+                    <FlipHorizontal size={32}/>
                   </button>
                </div>
             </div>
           </div>
-          <button onClick={() => { (videoRef.current?.srcObject as MediaStream)?.getTracks().forEach(t => t.stop()); setIsFaceMode(false); }} className="mt-8 text-white/50 font-bold hover:text-white transition-colors">Yopish</button>
+          <button onClick={() => { (videoRef.current?.srcObject as MediaStream)?.getTracks().forEach(t => t.stop()); setIsFaceMode(false); }} className="mt-8 px-8 py-3 bg-white/5 text-white/60 font-bold rounded-xl hover:text-white transition-colors">Yopish</button>
           
           <style>{`
             @keyframes scan {
-              0% { top: 0%; }
-              50% { top: 100%; }
-              100% { top: 0%; }
+              0% { transform: translateY(0); }
+              100% { transform: translateY(440px); }
             }
           `}</style>
         </div>
