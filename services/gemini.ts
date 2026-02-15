@@ -7,67 +7,58 @@ export interface StudentCandidate {
   name: string;
 }
 
+/**
+ * AI yordamida o'quvchini aniqlash.
+ * process.env.API_KEY dan foydalanadi.
+ */
 export async function identifyStudent(capturedBase64: string, candidates: StudentCandidate[]): Promise<{ match: boolean; studentId: string | null; confidence: number }> {
   try {
-    // process.env.API_KEY mavjudligini tekshirish
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
-      console.error("Gemini API_KEY is missing in environment variables.");
+      console.error("Gemini API_KEY topilmadi. Vercel muhitini tekshiring.");
       return { match: false, studentId: null, confidence: 0 };
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    const cleanCap = capturedBase64.replace(/^data:image\/\w+;base64,/, '');
-    const validCandidates = candidates.filter(c => !!c.photo);
+    // Base64 dan keraksiz qismni olib tashlash
+    const cleanCap = capturedBase64.split(',')[1] || capturedBase64;
+    
+    // Faqat rasmi bor o'quvchilarni olish
+    const validCandidates = candidates.filter(c => c.photo && c.photo.includes(','));
     
     if (validCandidates.length === 0) {
       return { match: false, studentId: null, confidence: 0 };
     }
 
-    const imageParts: any[] = [
-      { inlineData: { mimeType: 'image/jpeg', data: cleanCap } },
-      { text: `IDENTITY VERIFICATION TASK:
-The first image is the 'Subject' to be identified.
-The following images are 'References' with IDs.
-Compare the Subject's facial structure (eyes, nose, jaw) with the References.
-Ignore lighting, background, or camera quality.
-Return the ID of the matching student in JSON format.
-
-{
-  "match": boolean,
-  "studentId": string | null,
-  "confidence": number (0-1)
-}` }
+    const parts: any[] = [
+      {
+        text: `Vazifa: Birinchi rasmda tasvirlangan shaxsni quyidagi ro'yxatdagi o'quvchilar orasidan aniqlang.
+        Javobni FAQAT JSON formatida qaytaring: {"match": boolean, "studentId": "id_string_yoki_null", "confidence": 0-1 oralig'ida}.
+        Agar o'quvchi aniq tanilsa, "match" true bo'lsin.`
+      },
+      { inlineData: { mimeType: 'image/jpeg', data: cleanCap } }
     ];
 
     validCandidates.forEach(c => {
-      const cleanRef = c.photo.replace(/^data:image\/\w+;base64,/, '');
-      imageParts.push({ text: `ID: ${c.id}` });
-      imageParts.push({ inlineData: { mimeType: 'image/jpeg', data: cleanRef } });
+      const data = c.photo.split(',')[1] || c.photo;
+      parts.push({ text: `ID: ${c.id}` });
+      parts.push({ inlineData: { mimeType: 'image/jpeg', data } });
     });
 
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: { parts: imageParts },
+      contents: [{ role: 'user', parts }],
       config: {
         responseMimeType: "application/json"
       }
     });
 
-    let textResult = response.text || '';
-    // Clean up potential markdown blocks from the AI response
-    textResult = textResult.replace(/```json/g, '').replace(/```/g, '').trim();
-    
-    const result = JSON.parse(textResult);
-    
-    // Low confidence threshold adjustment for mobile cameras
-    if (result.match && result.confidence < 0.25) {
-      return { match: false, studentId: null, confidence: result.confidence };
-    }
-
-    return result;
+    const textResult = response.text || '{"match": false}';
+    // Markdown bloklarini (```json ... ```) tozalash
+    const cleanJson = textResult.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanJson);
   } catch (error) {
-    console.error("AI Identification Exception:", error);
+    console.error("Gemini Identifikatsiya xatosi:", error);
     return { match: false, studentId: null, confidence: 0 };
   }
 }
