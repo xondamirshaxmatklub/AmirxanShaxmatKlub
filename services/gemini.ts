@@ -9,41 +9,40 @@ export interface StudentCandidate {
 
 export async function identifyStudent(capturedBase64: string, candidates: StudentCandidate[]): Promise<{ match: boolean; studentId: string | null; confidence: number }> {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    
+    // process.env.API_KEY mavjudligini tekshirish
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      console.error("Gemini API_KEY is missing in environment variables.");
+      return { match: false, studentId: null, confidence: 0 };
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
     const cleanCap = capturedBase64.replace(/^data:image\/\w+;base64,/, '');
-    
-    // Only students with reference photos
     const validCandidates = candidates.filter(c => !!c.photo);
     
     if (validCandidates.length === 0) {
       return { match: false, studentId: null, confidence: 0 };
     }
 
-    // Advanced Biometric Prompt
     const imageParts: any[] = [
       { inlineData: { mimeType: 'image/jpeg', data: cleanCap } },
-      { text: `TASK: Face Identification.
-Input: One 'Target' image (the person in front of the camera) and multiple 'Reference' images of students.
-Objective: Identify which Reference student is the Target.
+      { text: `IDENTITY VERIFICATION TASK:
+The first image is the 'Subject' to be identified.
+The following images are 'References' with IDs.
+Compare the Subject's facial structure (eyes, nose, jaw) with the References.
+Ignore lighting, background, or camera quality.
+Return the ID of the matching student in JSON format.
 
-GUIDELINES:
-1. Focus on permanent facial features: eye shape, distance between eyes, nose bridge, jawline, and forehead structure.
-2. Ignore differences in: lighting, background, camera angle, minor facial expressions, and image quality.
-3. Even if the quality is low, try to find the closest skeletal/facial match.
-4. Output MUST be in JSON format only.
-
-Output Schema:
 {
   "match": boolean,
-  "studentId": "string or null",
-  "confidence": number (0.0 to 1.0)
+  "studentId": string | null,
+  "confidence": number (0-1)
 }` }
     ];
 
     validCandidates.forEach(c => {
       const cleanRef = c.photo.replace(/^data:image\/\w+;base64,/, '');
-      imageParts.push({ text: `REFERENCE_ID: ${c.id}` });
+      imageParts.push({ text: `ID: ${c.id}` });
       imageParts.push({ inlineData: { mimeType: 'image/jpeg', data: cleanRef } });
     });
 
@@ -55,21 +54,20 @@ Output Schema:
       }
     });
 
-    let textResult = response.text || '{"match": false, "studentId": null, "confidence": 0}';
-    
-    // Sanitizing Markdown JSON blocks if present
+    let textResult = response.text || '';
+    // Clean up potential markdown blocks from the AI response
     textResult = textResult.replace(/```json/g, '').replace(/```/g, '').trim();
     
     const result = JSON.parse(textResult);
     
-    // Adjusted confidence threshold for low-quality mobile cameras
-    if (result.match && result.confidence < 0.3) {
-        return { match: false, studentId: null, confidence: result.confidence };
+    // Low confidence threshold adjustment for mobile cameras
+    if (result.match && result.confidence < 0.25) {
+      return { match: false, studentId: null, confidence: result.confidence };
     }
 
     return result;
   } catch (error) {
-    console.error("Face identification error:", error);
+    console.error("AI Identification Exception:", error);
     return { match: false, studentId: null, confidence: 0 };
   }
 }

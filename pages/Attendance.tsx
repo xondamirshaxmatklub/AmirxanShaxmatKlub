@@ -83,10 +83,9 @@ const Attendance: React.FC<Props> = ({ user }) => {
   };
 
   const handleFinish = async () => {
-    if (!session || !confirm('Darsni yakunlaysizmi? Ballar arxivga (tarixga) yoziladi.')) return;
+    if (!session || !confirm('Darsni yakunlaysizmi?')) return;
     
     const latestAllRecords = db.getRecords() || [];
-    const currentLedger = db.getLedger() || [];
     const updatedRecords = [...latestAllRecords];
     const newLedgerEntries: CoinLedger[] = [];
 
@@ -95,36 +94,35 @@ const Attendance: React.FC<Props> = ({ user }) => {
       let record = recordIdx > -1 ? updatedRecords[recordIdx] : null;
 
       if (!record) {
-        const newRecord: AttendanceRecord = {
+        updatedRecords.push({
           id: db.generateId(),
           sessionId: session.id,
           studentId: student.id,
           status: AttendanceStatus.KELMADI,
           coins: 0,
           coinsApplied: true 
-        };
-        updatedRecords.push(newRecord);
+        });
         continue;
       }
 
-      const coinsToApply = Number(record.coins || 0);
-      if (record.coinsApplied !== true && coinsToApply > 0) {
+      if (record.coinsApplied !== true && Number(record.coins) > 0) {
         newLedgerEntries.push({
           id: db.generateId(),
           studentId: student.id,
           dateTime: new Date().toISOString(),
-          amount: coinsToApply,
+          amount: Number(record.coins),
           type: LedgerType.ATTENDANCE,
           note: `Dars: ${session.date}`
         });
-        updatedRecords[recordIdx] = { ...record, coinsApplied: true };
-      } else {
         updatedRecords[recordIdx] = { ...record, coinsApplied: true };
       }
     }
 
     try {
-      db.set(STORAGE_KEYS.COIN_LEDGER, [...currentLedger, ...newLedgerEntries]);
+      if (newLedgerEntries.length > 0) {
+        const currentLedger = db.getLedger() || [];
+        db.set(STORAGE_KEYS.COIN_LEDGER, [...currentLedger, ...newLedgerEntries]);
+      }
       db.set(STORAGE_KEYS.ATTENDANCE_RECORDS, updatedRecords);
       
       const allSessions = db.getSessions() || [];
@@ -143,55 +141,52 @@ const Attendance: React.FC<Props> = ({ user }) => {
 
   const captureFace = async () => {
     if (!videoRef.current || isLoading) return;
+    
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      setFaceMsg('Xato: Vercel-da API_KEY yo\'q. Iltimos REDEPLOY qiling!');
+      return;
+    }
+
     setIsLoading(true);
-    setFaceMsg('AI tahlil qilmoqda...');
+    setFaceMsg('AI yuzni tahlil qilmoqda...');
     
-    const c = document.createElement('canvas');
-    // High-res capture for better recognition on mobile
-    const width = 1280;
-    const height = (videoRef.current.videoHeight / videoRef.current.videoWidth) * width;
-    c.width = width;
-    c.height = height;
-    
-    const ctx = c.getContext('2d');
-    if (!ctx) return;
-    
-    // Draw current frame
-    ctx.drawImage(videoRef.current, 0, 0, width, height);
-    const img = c.toDataURL('image/jpeg', 0.9);
-    
-    const candidates = members
-      .filter(s => s.facePhoto && !s.isFrozen)
-      .map(s => ({ id: s.id, photo: s.facePhoto!, name: `${s.ism} ${s.familiya}` }));
-    
-    if (candidates.length === 0) {
-      setFaceMsg('Reference rasm mavjud emas');
-      setIsLoading(false);
-      return;
-    }
-
-    if (!process.env.API_KEY) {
-      setFaceMsg('Xato: API_KEY topilmadi');
-      setIsLoading(false);
-      return;
-    }
-
     try {
+      const c = document.createElement('canvas');
+      const width = 1024; // Balanced resolution for Gemini
+      const height = (videoRef.current.videoHeight / videoRef.current.videoWidth) * width;
+      c.width = width;
+      c.height = height;
+      const ctx = c.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(videoRef.current, 0, 0, width, height);
+      const img = c.toDataURL('image/jpeg', 0.85);
+      
+      const candidates = members
+        .filter(s => s.facePhoto && !s.isFrozen)
+        .map(s => ({ id: s.id, photo: s.facePhoto!, name: `${s.ism} ${s.familiya}` }));
+      
+      if (candidates.length === 0) {
+        setFaceMsg('Bazada o\'quvchi rasmlari topilmadi');
+        setIsLoading(false);
+        return;
+      }
+
       const res = await identifyStudent(img, candidates);
       if (res.match && res.studentId) {
         const student = members.find(m => m.id === res.studentId);
         if (student) {
           await setStatus(student.id, AttendanceStatus.KELDI);
-          setFaceMsg(`Muvaffaqiyatli: ${student.ism}!`);
+          setFaceMsg(`Tanildi: ${student.ism}!`);
           setTimeout(() => setFaceMsg('Keyingi o\'quvchi...'), 1500);
         } else {
-          setFaceMsg('ID bo\'yicha topilmadi');
+          setFaceMsg('Topildi, lekin guruhda emas');
         }
       } else {
         setFaceMsg('Tizim tanimadi. Qayta urinib ko\'ring');
       }
     } catch (err) {
-      setFaceMsg('Xatolik: API ulanishda uzilish');
+      setFaceMsg('AI ulanishda xatolik yuz berdi');
       console.error(err);
     } finally {
       setIsLoading(false);
@@ -214,16 +209,16 @@ const Attendance: React.FC<Props> = ({ user }) => {
           <button 
             onClick={() => { 
               setIsFaceMode(true); 
-              setFaceMsg('Kamera yuklanmoqda...');
+              setFaceMsg('Kamera ochilmoqda...');
               setTimeout(() => {
-                navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } } })
+                navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { ideal: 1280 } } })
                   .then(s => {
                     if (videoRef.current) {
                       videoRef.current.srcObject = s;
-                      setFaceMsg('Yuzni kamera markazida tuting');
+                      setFaceMsg('Yuzni markazda tuting');
                     }
                   })
-                  .catch(() => { showToast('Kameraga ruxsat berilmadi', 'error'); setIsFaceMode(false); });
+                  .catch(() => { showToast('Kamera xatosi', 'error'); setIsFaceMode(false); });
               }, 100); 
             }} 
             className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg disabled:opacity-50" 
@@ -233,6 +228,13 @@ const Attendance: React.FC<Props> = ({ user }) => {
           </button>
         </div>
       </div>
+
+      {!process.env.API_KEY && (
+        <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center gap-3">
+           <AlertCircle className="text-red-600 shrink-0" size={20}/>
+           <p className="text-xs text-red-800 font-bold">Vercel-da API_KEY o'rnatilmagan yoki loyiha qayta "Redeploy" qilinmagan!</p>
+        </div>
+      )}
 
       {session && (
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
@@ -284,7 +286,7 @@ const Attendance: React.FC<Props> = ({ user }) => {
           <div className="relative w-full max-w-lg aspect-square bg-gray-900 rounded-3xl overflow-hidden shadow-2xl border-2 border-indigo-500/30">
             <video ref={videoRef} autoPlay playsInline className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
             
-            {/* Scan line overlay */}
+            {/* Scan animation */}
             {isLoading && (
               <div className="absolute inset-0 pointer-events-none overflow-hidden">
                 <div className="w-full h-1 bg-indigo-400 shadow-[0_0_20px_rgba(129,140,248,0.8)] animate-[scan_2s_linear_infinite]" />
@@ -292,7 +294,7 @@ const Attendance: React.FC<Props> = ({ user }) => {
             )}
 
             <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none flex items-center justify-center">
-               <div className="w-64 h-64 border-2 border-dashed border-white/40 rounded-full" />
+               <div className="w-64 h-64 border-2 border-dashed border-white/30 rounded-full" />
             </div>
 
             <div className="absolute bottom-6 inset-x-0 flex flex-col items-center gap-4 px-6">
@@ -308,7 +310,7 @@ const Attendance: React.FC<Props> = ({ user }) => {
                     tracks?.forEach(t => t.stop());
                     const newMode = facingMode === 'user' ? 'environment' : 'user';
                     setFacingMode(newMode);
-                    navigator.mediaDevices.getUserMedia({ video: { facingMode: newMode, width: { ideal: 1280 }, height: { ideal: 720 } } })
+                    navigator.mediaDevices.getUserMedia({ video: { facingMode: newMode, width: { ideal: 1280 } } })
                       .then(s => videoRef.current && (videoRef.current.srcObject = s));
                   }} className="w-20 h-20 bg-white/10 text-white rounded-full flex items-center justify-center shadow-lg active:rotate-180 transition-transform duration-500 backdrop-blur-md">
                     <RefreshCw size={32}/>
